@@ -98,10 +98,42 @@ def monitor_loop():
     if VOICE_HANDLER.voice_input_enabled:
         VOICE_HANDLER.start_listening(callback=voice_input_callback)
     
+    # Wait a bit before first capture to let UI initialize
+    print("⏳ Initializing... (waiting 3 seconds before first capture)")
+    time.sleep(3)
+    
     while RUNNING:
         try:
-            # Step 1: Capture and extract text
-            current_text = capture_and_ocr(MONITOR_REGION)
+            # Step 1: Capture and extract text (run OCR in separate thread to avoid blocking)
+            current_text = None
+            ocr_done = threading.Event()
+            ocr_error = None
+            
+            def ocr_worker():
+                nonlocal current_text, ocr_error
+                try:
+                    current_text = capture_and_ocr(MONITOR_REGION)
+                except Exception as e:
+                    ocr_error = e
+                finally:
+                    ocr_done.set()
+            
+            # Start OCR in separate thread with timeout
+            ocr_thread = threading.Thread(target=ocr_worker, daemon=True)
+            ocr_thread.start()
+            
+            # Wait for OCR with timeout (max 20 seconds - OCR is slow but we want to allow it)
+            # If it times out, we'll skip this iteration and try again next time
+            if ocr_done.wait(timeout=20):
+                if ocr_error:
+                    logging.error(f"OCR error: {ocr_error}")
+                    time.sleep(POLL_INTERVAL)
+                    continue
+            else:
+                # OCR timed out - skip this iteration (don't block the app)
+                logging.warning("OCR timed out (>20s), skipping this capture - will try again next cycle")
+                time.sleep(POLL_INTERVAL)
+                continue
             
             # Save screen text to notes if enabled (even if unchanged, for context)
             if NOTE_TAKER.enabled and current_text:

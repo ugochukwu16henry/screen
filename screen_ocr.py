@@ -48,17 +48,21 @@ def capture_and_ocr(region=None):
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(2.0)  # Increase contrast
         
-        # Extract text - use temporary file for compatibility with older Tesseract versions
-        # This avoids PNG library issues in older Tesseract builds
+        # Extract text with optimized settings for speed
+        # Use faster OCR config: --psm 6 (assume uniform block of text)
+        # and --oem 3 (default OCR engine mode)
+        ocr_config = '--psm 6 --oem 3'
+        
         try:
             # Try direct method first (works with newer Tesseract)
-            text = pytesseract.image_to_string(img, lang='eng')
+            # Use faster settings
+            text = pytesseract.image_to_string(img, lang='eng', config=ocr_config)
         except Exception:
             # Fallback: save to temporary file (works with older Tesseract versions)
             with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as tmp_file:
                 img.save(tmp_file.name, format='TIFF')
                 try:
-                    text = pytesseract.image_to_string(tmp_file.name, lang='eng')
+                    text = pytesseract.image_to_string(tmp_file.name, lang='eng', config=ocr_config)
                 finally:
                     # Clean up temporary file
                     try:
