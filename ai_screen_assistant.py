@@ -80,7 +80,8 @@ def voice_input_callback(text):
     # Optionally process voice input as a question
     # (You can enable this if you want voice commands/questions)
 
-def main_loop():
+def monitor_loop():
+    """Background thread that monitors screen and processes OCR."""
     global LAST_SEEN_TEXT, OVERLAY, RUNNING, NOTE_TAKER, VOICE_HANDLER
     note_status = "enabled" if NOTE_TAKER.enabled else "disabled"
     voice_input_status = "enabled" if VOICE_HANDLER.voice_input_enabled else "disabled"
@@ -97,12 +98,8 @@ def main_loop():
     if VOICE_HANDLER.voice_input_enabled:
         VOICE_HANDLER.start_listening(callback=voice_input_callback)
     
-    while True:
+    while RUNNING:
         try:
-            if not RUNNING:
-                time.sleep(1)
-                continue
-                
             # Step 1: Capture and extract text
             current_text = capture_and_ocr(MONITOR_REGION)
             
@@ -116,22 +113,23 @@ def main_loop():
                 if voice_text:
                     voice_input_callback(voice_text)
             
-            # Process tkinter events and pending overlay updates
-            if OVERLAY:
-                try:
-                    OVERLAY.process_updates()  # Process queued updates from background threads
-                    OVERLAY.root.update_idletasks()
-                except:
-                    pass
-            
             # Skip if no text or unchanged
             if not current_text or current_text == LAST_SEEN_TEXT:
+                time.sleep(POLL_INTERVAL)
+                continue
+            
+            # Filter out very short or mostly non-alphanumeric text (likely OCR noise)
+            clean_text = current_text.strip()
+            # Count meaningful characters (letters, numbers, common punctuation)
+            meaningful_chars = sum(1 for c in clean_text if c.isalnum() or c in ' .,!?;:-()[]{}')
+            if len(clean_text) < 10 or meaningful_chars < len(clean_text) * 0.3:
+                # Likely OCR noise, skip
                 time.sleep(POLL_INTERVAL)
                 continue
 
             # New question detected!
             LAST_SEEN_TEXT = current_text
-            print(f"\n✅ New question detected:\n{current_text}\n")
+            print(f"\n✅ New question detected:\n{clean_text[:200]}\n")  # Show first 200 chars
 
             # Step 2+3: Generate response and show in overlay
             thread = threading.Thread(target=ai_worker, args=(current_text,))
@@ -140,30 +138,73 @@ def main_loop():
 
             time.sleep(POLL_INTERVAL)
 
-        except KeyboardInterrupt:
-            print("\n🛑 Shutting down...")
-            break
         except Exception as e:
-            logging.error(f"Unexpected error: {e}")
+            logging.error(f"Unexpected error in monitor loop: {e}")
             if OVERLAY:
                 OVERLAY.update_text("⚠️ System error. Check logs.")
             time.sleep(5)
 
 if __name__ == "__main__":
-    # Initialize overlay (Step 3) with settings
-    overlay_config = settings.get("overlay", {})
-    OVERLAY = AnswerOverlay(
-        x=overlay_config.get("x", 50),
-        y=overlay_config.get("y", 50),
-        width=overlay_config.get("width", 500),
-        height=overlay_config.get("height", 200)
-    )
+    print("🚀 Initializing AI Screen Assistant...")
+    
+    # Get screen dimensions for fullscreen overlay
+    import tkinter as tk
+    temp_root = tk.Tk()
+    screen_width = temp_root.winfo_screenwidth()
+    screen_height = temp_root.winfo_screenheight()
+    temp_root.destroy()
+    
+    # Initialize overlay (Step 3) with settings - make it fullscreen
+    # Access overlay settings directly from settings dict
+    overlay_config = settings.settings.get("overlay", {})
+    
+    # Make overlay fullscreen by default
+    overlay_x = overlay_config.get("x", 0)
+    overlay_y = overlay_config.get("y", 0)
+    overlay_width = overlay_config.get("width", screen_width)
+    overlay_height = overlay_config.get("height", screen_height)
+    
+    # If overlay config doesn't specify fullscreen, use fullscreen
+    if overlay_width < screen_width * 0.8 or overlay_height < screen_height * 0.8:
+        overlay_width = screen_width
+        overlay_height = screen_height
+        overlay_x = 0
+        overlay_y = 0
+        print("📺 Using fullscreen overlay")
+    
+    print(f"📐 Overlay config: {overlay_x}, {overlay_y}, {overlay_width}x{overlay_height}")
+    print(f"🖥️ Screen size: {screen_width}x{screen_height}")
+    
+    try:
+        OVERLAY = AnswerOverlay(
+            x=overlay_x,
+            y=overlay_y,
+            width=overlay_width,
+            height=overlay_height,
+            fullscreen=(overlay_width == screen_width and overlay_height == screen_height)
+        )
+        print("✅ Overlay window created")
+    except Exception as e:
+        print(f"❌ Error creating overlay: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
+    
     try:
         from overlay_display import enable_click_through_windows
         enable_click_through_windows(OVERLAY)
-    except:
-        pass
+        print("✅ Click-through enabled")
+    except Exception as e:
+        print(f"⚠️ Could not enable click-through: {e}")
 
+    # Get monitor region info
+    monitor_region = settings.settings.get("monitor_region", {
+        "top": 200,
+        "left": 300,
+        "width": 700,
+        "height": 200
+    })
+    
     # Update overlay with status
     note_status = "📝 Notes ON" if NOTE_TAKER.enabled else "📝 Notes OFF"
     voice_status = ""
@@ -175,17 +216,66 @@ if __name__ == "__main__":
     status_text = f"🧠 AI Assistant Ready\n{note_status}"
     if voice_status:
         status_text += f"\n{voice_status}"
-    status_text += "\nMonitoring screen..."
+    status_text += f"\n\n📊 Monitoring Region:"
+    status_text += f"\n  Position: ({monitor_region.get('left', 0)}, {monitor_region.get('top', 0)})"
+    status_text += f"\n  Size: {monitor_region.get('width', 0)}x{monitor_region.get('height', 0)}"
+    status_text += f"\n\n💡 Configure region:"
+    status_text += f"\n  python settings_manager.py"
     
-    OVERLAY.update_text(status_text)
-    OVERLAY.show()
-
-    # Start main loop
     try:
-        main_loop()
+        OVERLAY.update_text(status_text)
+        OVERLAY.show()
+        # Force window to front and make sure it's visible
+        OVERLAY.root.lift()
+        OVERLAY.root.focus_force()
+        print("✅ Overlay window shown")
+        print(f"📍 Overlay window: {overlay_x}, {overlay_y}, {overlay_width}x{overlay_height}")
+        print(f"📊 Monitoring region: ({monitor_region.get('left', 0)}, {monitor_region.get('top', 0)}) {monitor_region.get('width', 0)}x{monitor_region.get('height', 0)}")
+        print("💡 To change the monitoring region, run: python settings_manager.py")
+    except Exception as e:
+        print(f"❌ Error showing overlay: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Handle window close event
+    def on_closing():
+        global RUNNING
+        RUNNING = False
+        OVERLAY.root.quit()
+    
+    OVERLAY.root.protocol("WM_DELETE_WINDOW", on_closing)
+
+    # Start monitoring in background thread
+    monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+    monitor_thread.start()
+
+    # Run tkinter mainloop in main thread (required for Windows)
+    # This keeps the window responsive
+    try:
+        # Schedule periodic updates to process queued overlay updates
+        def periodic_update():
+            if OVERLAY and RUNNING:
+                try:
+                    OVERLAY.process_updates()
+                except:
+                    pass
+                # Schedule next update
+                OVERLAY.root.after(100, periodic_update)
+            elif not RUNNING:
+                OVERLAY.root.quit()
+        
+        # Start periodic updates
+        OVERLAY.root.after(100, periodic_update)
+        
+        # Run tkinter mainloop (this is the main event loop)
+        OVERLAY.root.mainloop()
     except KeyboardInterrupt:
-        pass
+        print("\n🛑 Shutting down...")
+        RUNNING = False
+    except Exception as e:
+        logging.error(f"Error in main loop: {e}")
     finally:
+        RUNNING = False
         # Save notes before exit
         if NOTE_TAKER:
             NOTE_TAKER.end_session()

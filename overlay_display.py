@@ -4,14 +4,29 @@ import threading
 import queue
 
 class AnswerOverlay:
-    def __init__(self, x=100, y=100, width=500, height=150):
+    def __init__(self, x=100, y=100, width=500, height=150, fullscreen=False):
         self.root = tk.Tk()
         self.root.title("AI Assistant (Private)")
         
         # Make window transparent and click-through
-        self.root.attributes("-alpha", 0.85)          # Transparency (0–1)
+        # For fullscreen, make window very transparent so screen is visible
+        # The label will have its own background for readability
+        if fullscreen:
+            # For fullscreen, make window almost completely transparent
+            self.root.attributes("-alpha", 0.01)  # Almost invisible window
+            self.root.configure(bg='black')
+        else:
+            self.root.attributes("-alpha", 0.9)
+            self.root.configure(bg='black')
         self.root.attributes("-topmost", True)        # Always on top
         self.root.overrideredirect(True)             # No title bar/borders
+        
+        # If fullscreen, get screen dimensions
+        if fullscreen:
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            x, y = 0, 0
+            width, height = screen_width, screen_height
         
         # Enable click-through (platform-specific)
         try:
@@ -30,22 +45,26 @@ class AnswerOverlay:
         # Set geometry
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         
-        # Create label for text
+        # Create label for text - position in top-left for fullscreen
+        # Use solid background for text readability (window itself is transparent)
         self.text_label = tk.Label(
             self.root,
             text="",
-            bg="black",
+            bg="#000000",  # Solid black background for text box
             fg="white",
             justify="left",
-            wraplength=width - 20,
-            padx=10,
-            pady=10
+            anchor="nw",  # Anchor to top-left
+            wraplength=min(width - 40, 600),  # Limit width for readability
+            padx=20,
+            pady=20,
+            font=("Arial", 11)  # Slightly larger font for visibility
         )
-        self.text_label.pack(fill="both", expand=True)
+        # Pack to top-left instead of filling entire window
+        self.text_label.pack(anchor="nw", fill="none")
         
-        # Custom font
-        custom_font = tkfont.Font(family="Helvetica", size=12)
-        self.text_label.config(font=custom_font)
+        # Custom font (already set in Label creation, but can override here if needed)
+        # custom_font = tkfont.Font(family="Arial", size=11)
+        # self.text_label.config(font=custom_font)
         
         # Thread-safe update mechanism using queue
         self._update_queue = queue.Queue()
