@@ -309,9 +309,15 @@ if __name__ == "__main__":
     
     OVERLAY.root.protocol("WM_DELETE_WINDOW", on_closing)
 
-    # Start monitoring in background thread
-    monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
-    monitor_thread.start()
+    # Start monitoring in background thread (delayed to ensure UI is ready)
+    # Give UI a moment to fully render before starting OCR
+    def delayed_monitor_start():
+        time.sleep(2)  # Additional delay to ensure UI is ready
+        monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+        monitor_thread.start()
+    
+    delayed_thread = threading.Thread(target=delayed_monitor_start, daemon=True)
+    delayed_thread.start()
 
     # Run tkinter mainloop in main thread (required for Windows)
     # This keeps the window responsive
