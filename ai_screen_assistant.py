@@ -34,24 +34,44 @@ def cleanup():
 atexit.register(cleanup)
 
 def generate_ai_response(prompt: str) -> str:
-    """Sends prompt to local Ollama and returns response."""
+    """Sends prompt to local Ollama and returns response - optimized for speed."""
     try:
+        # Optimize for speed: shorter context, faster temperature, streaming
+        # Limit prompt length to avoid slow processing
+        max_prompt_length = 500
+        if len(prompt) > max_prompt_length:
+            prompt = prompt[:max_prompt_length] + "..."
+        
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
                 "model": AI_MODEL,
-                "prompt": f"Answer concisely: {prompt}",
+                "prompt": f"Answer briefly and concisely in 1-2 sentences: {prompt}",
                 "stream": False,
-                "options": {"temperature": 0.2, "num_ctx": 512}
+                "options": {
+                    "temperature": 0.1,  # Lower temperature for faster, more deterministic responses
+                    "num_ctx": 256,  # Reduced context window for speed
+                    "num_predict": 100,  # Limit response length for speed
+                    "top_k": 20,  # Reduce sampling options for speed
+                    "top_p": 0.9  # Slightly reduce diversity for speed
+                }
             },
-            timeout=60
+            timeout=15  # Reduced timeout for faster failure detection
         )
         if response.status_code == 200:
-            return response.json().get("response", "").strip()
+            result = response.json().get("response", "").strip()
+            # Truncate if too long
+            if len(result) > 300:
+                result = result[:300] + "..."
+            return result
         else:
             return "[AI Error] Failed to generate response."
+    except requests.exceptions.Timeout:
+        return "[AI Timeout] Response took too long. Try a shorter question."
+    except requests.exceptions.ConnectionError:
+        return "[AI Offline] Ollama not running. Start it with: ollama serve"
     except Exception as e:
-        return f"[AI Offline] {str(e)}"
+        return f"[AI Error] {str(e)[:100]}"
 
 def ai_worker(question: str):
     """Runs in background thread to avoid freezing overlay."""
@@ -98,12 +118,20 @@ def monitor_loop():
     if VOICE_HANDLER.voice_input_enabled:
         VOICE_HANDLER.start_listening(callback=voice_input_callback)
     
-    # Wait a bit before first capture to let UI initialize
-    print("⏳ Initializing... (waiting 3 seconds before first capture)")
-    time.sleep(3)
+    # Wait longer before first capture to ensure UI is fully initialized
+    # This prevents hanging on startup
+    print("⏳ Initializing... (waiting 5 seconds before first capture)")
+    time.sleep(5)
+    
+    # Track if this is the first OCR attempt
+    first_ocr = True
     
     while RUNNING:
         try:
+            # On first OCR, use a shorter timeout to prevent hanging
+            # After that, use normal timeout
+            ocr_timeout = 5 if first_ocr else 15
+            
             # Step 1: Capture and extract text (run OCR in separate thread to avoid blocking)
             current_text = None
             ocr_done = threading.Event()
@@ -122,16 +150,20 @@ def monitor_loop():
             ocr_thread = threading.Thread(target=ocr_worker, daemon=True)
             ocr_thread.start()
             
-            # Wait for OCR with timeout (max 20 seconds - OCR is slow but we want to allow it)
-            # If it times out, we'll skip this iteration and try again next time
-            if ocr_done.wait(timeout=20):
+            # Wait for OCR with timeout - shorter on first attempt
+            if ocr_done.wait(timeout=ocr_timeout):
                 if ocr_error:
                     logging.error(f"OCR error: {ocr_error}")
                     time.sleep(POLL_INTERVAL)
                     continue
+                first_ocr = False  # First OCR completed
             else:
                 # OCR timed out - skip this iteration (don't block the app)
-                logging.warning("OCR timed out (>20s), skipping this capture - will try again next cycle")
+                if first_ocr:
+                    logging.warning(f"First OCR timed out (>{ocr_timeout}s), skipping - will try again")
+                    first_ocr = False  # Don't keep trying short timeout
+                else:
+                    logging.warning(f"OCR timed out (>{ocr_timeout}s), skipping this capture")
                 time.sleep(POLL_INTERVAL)
                 continue
             

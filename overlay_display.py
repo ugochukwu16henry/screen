@@ -9,11 +9,11 @@ class AnswerOverlay:
         self.root.title("AI Assistant (Private)")
         
         # Make window transparent and click-through
-        # For fullscreen, make window very transparent so screen is visible
+        # For fullscreen, make window visible but not too opaque
         # The label will have its own background for readability
         if fullscreen:
-            # For fullscreen, make window almost completely transparent
-            self.root.attributes("-alpha", 0.01)  # Almost invisible window
+            # For fullscreen, make window semi-transparent so it's visible
+            self.root.attributes("-alpha", 0.4)  # Visible but not blocking (40% opacity)
             self.root.configure(bg='black')
         else:
             self.root.attributes("-alpha", 0.9)
@@ -50,14 +50,16 @@ class AnswerOverlay:
         self.text_label = tk.Label(
             self.root,
             text="",
-            bg="#000000",  # Solid black background for text box
-            fg="white",
+            bg="#1a1a1a",  # Dark gray background for better visibility
+            fg="#ffffff",  # White text
             justify="left",
             anchor="nw",  # Anchor to top-left
             wraplength=min(width - 40, 600),  # Limit width for readability
             padx=20,
             pady=20,
-            font=("Arial", 11)  # Slightly larger font for visibility
+            font=("Arial", 12, "bold"),  # Larger, bold font for better visibility
+            relief="raised",  # Add border for visibility
+            bd=2  # Border width
         )
         # Pack to top-left instead of filling entire window
         self.text_label.pack(anchor="nw", fill="none")
