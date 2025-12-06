@@ -254,12 +254,15 @@ if __name__ == "__main__":
         traceback.print_exc()
         exit(1)
     
+    # CRITICAL: Enable click-through to prevent blocking other apps
     try:
         from overlay_display import enable_click_through_windows
         enable_click_through_windows(OVERLAY)
-        print("✅ Click-through enabled")
+        print("✅ Click-through enabled - other apps will work normally")
     except Exception as e:
-        print(f"⚠️ Could not enable click-through: {e}")
+        print(f"❌ CRITICAL: Could not enable click-through: {e}")
+        print("   The app may block other applications!")
+        print("   Installing pywin32 may help: pip install pywin32")
 
     # Get monitor region info
     monitor_region = settings.settings.get("monitor_region", {
@@ -289,10 +292,11 @@ if __name__ == "__main__":
     try:
         OVERLAY.update_text(status_text)
         OVERLAY.show()
-        # Force window to front and make sure it's visible
+        # CRITICAL: Don't force focus - this blocks other apps!
+        # Just lift the window without stealing focus
         OVERLAY.root.lift()
-        OVERLAY.root.focus_force()
-        print("✅ Overlay window shown")
+        # DO NOT call focus_force() - it blocks other applications!
+        print("✅ Overlay window shown (non-blocking)")
         print(f"📍 Overlay window: {overlay_x}, {overlay_y}, {overlay_width}x{overlay_height}")
         print(f"📊 Monitoring region: ({monitor_region.get('left', 0)}, {monitor_region.get('top', 0)}) {monitor_region.get('width', 0)}x{monitor_region.get('height', 0)}")
         print("💡 To change the monitoring region, run: python settings_manager.py")
@@ -320,25 +324,42 @@ if __name__ == "__main__":
     delayed_thread.start()
 
     # Run tkinter mainloop in main thread (required for Windows)
-    # This keeps the window responsive
+    # CRITICAL: Use non-blocking update loop to prevent freezing other apps
     try:
         # Schedule periodic updates to process queued overlay updates
         def periodic_update():
             if OVERLAY and RUNNING:
                 try:
                     OVERLAY.process_updates()
+                    # Use update_idletasks to avoid blocking
+                    OVERLAY.root.update_idletasks()
                 except:
                     pass
-                # Schedule next update
-                OVERLAY.root.after(100, periodic_update)
+                # Schedule next update (longer interval = less CPU usage)
+                OVERLAY.root.after(250, periodic_update)
             elif not RUNNING:
                 OVERLAY.root.quit()
         
         # Start periodic updates
-        OVERLAY.root.after(100, periodic_update)
+        OVERLAY.root.after(250, periodic_update)
         
-        # Run tkinter mainloop (this is the main event loop)
-        OVERLAY.root.mainloop()
+        # CRITICAL: Use non-blocking mainloop to prevent freezing
+        # This allows other applications to continue working
+        import tkinter as tk
+        while RUNNING:
+            try:
+                # Process events without blocking
+                OVERLAY.root.update_idletasks()
+                # Small update to keep window responsive
+                OVERLAY.root.update()
+                # Small sleep to allow other processes to run
+                time.sleep(0.05)  # 50ms sleep prevents CPU spinning
+            except tk.TclError:
+                # Window was destroyed
+                break
+            except Exception as e:
+                logging.error(f"Update loop error: {e}")
+                time.sleep(0.1)
     except KeyboardInterrupt:
         print("\n🛑 Shutting down...")
         RUNNING = False

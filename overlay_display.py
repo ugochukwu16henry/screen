@@ -21,6 +21,17 @@ class AnswerOverlay:
         self.root.attributes("-topmost", True)        # Always on top
         self.root.overrideredirect(True)             # No title bar/borders
         
+        # CRITICAL: Make window not steal focus or block input
+        # This prevents freezing other applications
+        try:
+            if self.root.tk.call('tk', 'windowingsystem') == 'win32':
+                # Don't focus the window - let other apps work
+                self.root.attributes("-disabled", False)
+                # Make sure it doesn't grab focus
+                self.root.focus_set = lambda: None  # Disable focus stealing
+        except:
+            pass
+        
         # If fullscreen, get screen dimensions
         if fullscreen:
             screen_width = self.root.winfo_screenwidth()
@@ -117,17 +128,37 @@ def enable_click_through_windows(window):
     try:
         import win32con
         import win32gui
+        import win32api
         hwnd = window.root.winfo_id()
-        win32gui.SetWindowLong(
+        
+        # Get current window style
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        
+        # Enable click-through: WS_EX_LAYERED | WS_EX_TRANSPARENT
+        # This allows clicks to pass through to apps behind
+        new_style = style | win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT
+        
+        # Also prevent window from stealing focus
+        new_style |= win32con.WS_EX_NOACTIVATE
+        
+        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
+        
+        # Make sure window doesn't block input
+        win32gui.SetWindowPos(
             hwnd,
-            win32con.GWL_EXSTYLE,
-            win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) |
-            win32con.WS_EX_LAYERED |
-            win32con.WS_EX_TRANSPARENT
+            win32con.HWND_TOPMOST,
+            0, 0, 0, 0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | 
+            win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
         )
+        
+        print("✅ Click-through enabled - window won't block other apps")
     except ImportError:
-        print("[Info] Install 'pywin32' for click-through on Windows:")
-        print("      pip install pywin32")
+        print("[Warning] pywin32 not available - window may block clicks")
+        print("          Install: pip install pywin32")
+    except Exception as e:
+        print(f"[Warning] Could not enable click-through: {e}")
+        print("          Window may block other applications")
 
 # Example usage
 if __name__ == "__main__":
